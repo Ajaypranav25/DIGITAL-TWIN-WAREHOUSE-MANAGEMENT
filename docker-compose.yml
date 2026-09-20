@@ -1,0 +1,63 @@
+version: '3.9'
+
+services:
+  # ─── PostgreSQL Database ───────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: dtwms_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: digital_twin_wms
+      POSTGRES_USER: dtwms_user
+      POSTGRES_PASSWORD: dtwms_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-run SQL scripts on first init (alphabetical order)
+      - ./01_ddl_schema.sql:/docker-entrypoint-initdb.d/01_ddl_schema.sql
+      - ./02_seed_data.sql:/docker-entrypoint-initdb.d/02_seed_data.sql
+      - ./03_triggers_procedures.sql:/docker-entrypoint-initdb.d/03_triggers_procedures.sql
+      - ./04_views_queries.sql:/docker-entrypoint-initdb.d/04_views_queries.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dtwms_user -d digital_twin_wms"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Node.js Express Backend ───────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dtwms_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: digital_twin_wms
+      DB_USER: dtwms_user
+      DB_PASSWORD: dtwms_pass
+      CORS_ORIGIN: http://localhost:5173
+    ports:
+      - "3001:3001"
+
+  # ─── React Frontend (dev mode) ────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dtwms_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  postgres_data:
