@@ -8,9 +8,14 @@
 const { test, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { Client } = require('pg');
-const { connectionConfig } = require('../src/config/connection');
 
-const client = new Client(connectionConfig());
+const client = new Client({
+  host: process.env.DB_HOST || 'localhost',
+  port: Number(process.env.DB_PORT || 5432),
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'postgres',
+  database: process.env.DB_NAME || 'digital_twin_wms',
+});
 
 const one = async (sql, params) => (await client.query(sql, params)).rows[0];
 const binStock = async (binCode) =>

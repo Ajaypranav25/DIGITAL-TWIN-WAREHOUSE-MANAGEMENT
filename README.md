@@ -91,23 +91,6 @@ Or in a single psql session:
 
 ---
 
-## Deploying to Vercel
-
-`vercel.json` deploys the repo as one Vercel project with two services:
-
-| Service | Root | Public path |
-|---|---|---|
-| `backend` (Express) | `backend/` | `/api/*` (routes already include the `/api` prefix) |
-| `frontend` (Vite SPA) | `frontend/` | everything else (deep links fall back to `index.html`) |
-
-The embedded PostgreSQL is for local development only. For Vercel:
-
-1. Create a hosted Postgres database (e.g. Neon from the Vercel Marketplace) and make sure the project has `DATABASE_URL` (or `POSTGRES_URL`) set for Production and Preview.
-2. Load the schema and seed once from your machine: `cd backend && DATABASE_URL="postgres://…?sslmode=require" node setup-db.js`
-3. Deploy with `vercel` (or Git integration). Test locally with `vercel dev`.
-
----
-
 ## Key Database Features Demonstrated
 
 ### 1. Triggers

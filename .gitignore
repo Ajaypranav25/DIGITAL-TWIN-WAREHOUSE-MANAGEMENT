@@ -41,6 +41,3 @@ backend/.pg-data/
 # Screenshots / temporary images
 *.png
 
-
-# Vercel local state (created by vercel dev / vercel link)
-.vercel/
