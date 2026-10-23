@@ -9,10 +9,13 @@
 -- -----------------------------------------------------------------------------
 -- SECTION A: BIN CAPACITY MANAGEMENT
 --
--- When an InventoryItem row is INSERTED or UPDATED:
+-- When an InventoryItem row is INSERTED, UPDATED or DELETED:
 --   1. Recalculate Bin.CurrentStock as the SUM of all InventoryItems in that bin.
 --   2. If the new stock > Bin.Capacity, raise a DB-level EXCEPTION (rejects write).
 --   3. If the new stock = Bin.Capacity, log a HIGH-severity 'Overstocked' Alert.
+--   4. If the bin drops below capacity again, open Overstocked alerts for it
+--      are auto-resolved (the physical condition has cleared).
+--   5. If an item is moved to another bin, the old bin is re-synced as well.
 -- -----------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION fn_sync_bin_stock()
@@ -20,17 +23,34 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 DECLARE
+    v_bin_id        INT;
     v_capacity      INT;
     v_new_stock     INT;
     v_zone_id       INT;
     v_bin_code      VARCHAR(30);
     v_existing_alert INT;
 BEGIN
+    -- NEW is NULL for DELETE, so work out which bin changed
+    IF TG_OP = 'DELETE' THEN
+        v_bin_id := OLD.BinID;
+    ELSE
+        v_bin_id := NEW.BinID;
+    END IF;
+
+    -- Item moved to another bin: the bin it left must be re-synced too
+    IF TG_OP = 'UPDATE' AND OLD.BinID <> NEW.BinID THEN
+        UPDATE Bin
+           SET CurrentStock = (SELECT COALESCE(SUM(Quantity), 0)
+                                 FROM InventoryItem
+                                WHERE BinID = OLD.BinID)
+         WHERE BinID = OLD.BinID;
+    END IF;
+
     -- -- 1. Compute the new aggregate stock for this bin ----------------------
     SELECT COALESCE(SUM(Quantity), 0)
       INTO v_new_stock
       FROM InventoryItem
-     WHERE BinID = NEW.BinID;
+     WHERE BinID = v_bin_id;
 
     -- -- 2. Fetch bin metadata ------------------------------------------------
     SELECT b.Capacity, b.BinCode,
@@ -38,26 +58,31 @@ BEGIN
       INTO v_capacity, v_bin_code, v_zone_id
       FROM Bin  b
       JOIN Rack r ON r.RackID = b.RackID
-     WHERE b.BinID = NEW.BinID;
+     WHERE b.BinID = v_bin_id;
+
+    -- Bin itself is being deleted (ON DELETE CASCADE) - nothing to sync
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
 
     -- -- 3. Hard-block: reject if stock would exceed capacity -----------------
     IF v_new_stock > v_capacity THEN
         RAISE EXCEPTION
             'CAPACITY EXCEEDED: Bin % (ID=%) cannot hold % units - max capacity is %.',
-            v_bin_code, NEW.BinID, v_new_stock, v_capacity;
+            v_bin_code, v_bin_id, v_new_stock, v_capacity;
     END IF;
 
     -- -- 4. Update Bin.CurrentStock -------------------------------------------
     UPDATE Bin
        SET CurrentStock = v_new_stock
-     WHERE BinID = NEW.BinID;
+     WHERE BinID = v_bin_id;
 
     -- -- 5. Raise alert if bin is now exactly at capacity (full) --------------
     IF v_new_stock = v_capacity THEN
         -- Avoid duplicate open alerts for the same bin
         SELECT COUNT(*) INTO v_existing_alert
           FROM Alert
-         WHERE BinID   = NEW.BinID
+         WHERE BinID   = v_bin_id
            AND AlertType = 'Overstocked'
            AND Status  IN ('Open', 'Acknowledged');
 
@@ -65,26 +90,33 @@ BEGIN
             INSERT INTO Alert (ZoneID, BinID, AlertType, Severity, Message, Status)
             VALUES (
                 v_zone_id,
-                NEW.BinID,
+                v_bin_id,
                 'Overstocked',
                 'High',
                 FORMAT('Bin %s (ID=%s) has reached 100%% capacity (%s/%s units). '
                        || 'No further stock can be added until items are removed.',
-                       v_bin_code, NEW.BinID, v_new_stock, v_capacity),
+                       v_bin_code, v_bin_id, v_new_stock, v_capacity),
                 'Open'
             );
-            RAISE NOTICE 'ALERT RAISED: Bin % is now full (%.% units).', v_bin_code, v_new_stock, v_capacity;
+            RAISE NOTICE 'ALERT RAISED: Bin % is now full (%/% units).', v_bin_code, v_new_stock, v_capacity;
         END IF;
+    ELSE
+        -- -- 6. Bin has free space again: the overstock condition has cleared --
+        UPDATE Alert
+           SET Status = 'Resolved', ResolvedAt = NOW()
+         WHERE BinID = v_bin_id
+           AND AlertType = 'Overstocked'
+           AND Status IN ('Open', 'Acknowledged');
     END IF;
 
-    RETURN NEW;
+    RETURN NULL;  -- return value is ignored for AFTER triggers
 END;
 $$;
 
--- Attach trigger - fires AFTER INSERT or UPDATE on InventoryItem
+-- Attach trigger - fires AFTER INSERT, UPDATE or DELETE on InventoryItem
 DROP TRIGGER IF EXISTS trg_bin_stock_sync ON InventoryItem;
 CREATE TRIGGER trg_bin_stock_sync
-    AFTER INSERT OR UPDATE OF Quantity
+    AFTER INSERT OR UPDATE OF Quantity, BinID OR DELETE
     ON InventoryItem
     FOR EACH ROW
     EXECUTE FUNCTION fn_sync_bin_stock();
@@ -178,13 +210,68 @@ CREATE TRIGGER trg_sensor_threshold_check
 
 
 -- -----------------------------------------------------------------------------
+-- SECTION B2: SENSOR FAILURE ALERT
+--
+-- When a Sensor's Status is UPDATED to 'Faulty':
+--   - Insert a 'Sensor Failure' Alert for that sensor's zone (once - no
+--     duplicate while an earlier failure alert is still unresolved).
+-- -----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION fn_sensor_failure_alert()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_existing_alert INT;
+BEGIN
+    IF NEW.Status <> 'Faulty' OR OLD.Status = 'Faulty' THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT COUNT(*) INTO v_existing_alert
+      FROM Alert
+     WHERE SensorID  = NEW.SensorID
+       AND AlertType = 'Sensor Failure'
+       AND Status    IN ('Open', 'Acknowledged');
+
+    IF v_existing_alert = 0 THEN
+        INSERT INTO Alert (ZoneID, SensorID, BinID, AlertType, Severity, Message, Status)
+        VALUES (
+            NEW.ZoneID,
+            NEW.SensorID,
+            NEW.BinID,
+            'Sensor Failure',
+            'Medium',
+            FORMAT('[SENSOR FAILURE] %s sensor %s (ID=%s) changed from %s to Faulty. '
+                   || 'Readings from this device are no longer trusted.',
+                   NEW.SensorType, COALESCE(NEW.Model, 'unknown model'), NEW.SensorID, OLD.Status),
+            'Open'
+        );
+        RAISE NOTICE 'SENSOR FAILURE ALERT: Sensor % is now Faulty.', NEW.SensorID;
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_sensor_failure_alert ON Sensor;
+CREATE TRIGGER trg_sensor_failure_alert
+    AFTER UPDATE OF Status
+    ON Sensor
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_sensor_failure_alert();
+
+
+
+
+-- -----------------------------------------------------------------------------
 -- SECTION C: ORDER FULFILMENT STORED PROCEDURE
 --
 -- sp_fulfil_order(p_order_id INT)
 --   Atomically:
 --     1. Validates the order is in a fulfillable state.
 --     2. For each OrderItem, locates sufficient InventoryItem stock across bins.
---     3. Decrements stock (FIFO bin selection).
+--     3. Decrements stock (FIFO: oldest stock first).
 --     4. Updates Order.Status -> 'Fulfilled'.
 --     5. Creates a Shipment record.
 --     6. Rolls back the entire transaction on any failure.
@@ -227,13 +314,14 @@ BEGIN
     LOOP
         v_remaining := v_item.Quantity;
 
-        -- FIFO: pick bins with this product, highest quantity first
+        -- FIFO: pick the oldest stock first (least recently updated bin)
         FOR v_bin_row IN
             SELECT ii.InventoryItemID, ii.BinID, ii.Quantity
               FROM InventoryItem ii
              WHERE ii.ProductID = v_item.ProductID
                AND ii.Quantity  > 0
-             ORDER BY ii.Quantity DESC          -- greedy / FIFO
+             ORDER BY ii.LastUpdated ASC,       -- FIFO: oldest stock leaves first
+                      ii.InventoryItemID ASC
                FOR UPDATE SKIP LOCKED           -- concurrent-safe
         LOOP
             EXIT WHEN v_remaining <= 0;
@@ -384,9 +472,10 @@ COMMIT;
 
 ---------------------------------------------------------------------------- */
 
--- Take snapshots for both warehouses (safe to run anytime)
+-- Take a fresh snapshot for every warehouse (safe to run anytime)
 CALL sp_take_snapshot(1);
 CALL sp_take_snapshot(2);
+CALL sp_take_snapshot(3);
 
 -- =============================================================================
 -- END OF TRIGGERS & PROCEDURES SCRIPT

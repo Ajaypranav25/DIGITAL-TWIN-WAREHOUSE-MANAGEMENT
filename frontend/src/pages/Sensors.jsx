@@ -1,12 +1,19 @@
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import { usePolling } from '../hooks/usePolling';
-import { getSensors, getSensorReadings, addSensorReading } from '../api/sensors';
+import { getSensors, getSensorReadings, addSensorReading, updateSensorStatus } from '../api/sensors';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import Badge from '../components/UI/Badge';
 import SensorLineChart from '../components/Charts/SensorLineChart';
 import { Activity, Thermometer, Weight, Wifi } from 'lucide-react';
 import toast from 'react-hot-toast';
+
+// Small values (smoke density) need more decimals; counts (RFID tags) need none
+function formatReading(value) {
+  const n = Number(value);
+  if (Number.isInteger(n)) return String(n);
+  return Math.abs(n) < 1 ? n.toFixed(3) : n.toFixed(1);
+}
 
 export default function Sensors() {
   const { data: sensors, loading, refetch } = useApi(() => getSensors());
@@ -25,9 +32,9 @@ export default function Sensors() {
 
   useEffect(() => {
     if (sid) {
-      refetchReadings();
+      refetchReadings().catch(() => {});
     }
-  }, [sid]);
+  }, [sid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [readingForm, setReadingForm] = useState({ value: '', unit: '' });
 
@@ -39,11 +46,32 @@ export default function Sensors() {
         unit: readingForm.unit || 'unit'
       });
       toast.success('Reading injected into digital twin');
-      setReadingForm({ value: '', unit: '' });
+      setReadingForm((form) => ({ ...form, value: '' }));
       refetch();
       if (sid === sensorId) refetchReadings();
     } catch(err) {
       toast.error(err.message || 'Failed to inject reading');
+    }
+  };
+
+  const toggleFaulty = async (sensorId, currentStatus) => {
+    const nextStatus = currentStatus === 'Faulty' ? 'Active' : 'Faulty';
+    try {
+      await updateSensorStatus(sensorId, nextStatus);
+      toast.success(nextStatus === 'Faulty'
+        ? 'Sensor marked Faulty - trigger raises a failure alert (unless one is already open)'
+        : 'Sensor back to Active');
+      refetch();
+    } catch (err) {
+      toast.error(err.message || 'Failed to update sensor');
+    }
+  };
+
+  const getStatusVariant = (status) => {
+    switch (status) {
+      case 'Active': return 'success';
+      case 'Maintenance': return 'warning';
+      default: return 'danger';
     }
   };
 
@@ -73,7 +101,11 @@ export default function Sensors() {
           const thMin = sensor.thresholdMin ?? sensor.threshold_min;
           const thMax = sensor.thresholdMax ?? sensor.threshold_max;
           const latestVal = sensor.latestReading ?? sensor.latest_reading;
-          const unit = sensor.unit || (sensorType === 'Temperature' ? 'degC' : sensorType === 'Weight' ? 'kg' : '');
+          const unit = sensor.latestUnit || '';
+          const isBreaching = latestVal !== null && latestVal !== undefined && (
+            (thMax !== null && thMax !== undefined && Number(latestVal) > Number(thMax)) ||
+            (thMin !== null && thMin !== undefined && Number(latestVal) < Number(thMin))
+          );
           
           return (
             <div key={sensorId} className={`bg-slate-800 rounded-xl p-5 border ${isSelected ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-slate-700'} shadow-sm flex flex-col`}>
@@ -82,20 +114,21 @@ export default function Sensors() {
                   <div className="p-2 bg-slate-900 rounded-lg text-indigo-400"><Icon size={20} /></div>
                   <div>
                     <h3 className="font-semibold text-white">{sensorType}</h3>
-                    <p className="text-xs text-slate-400">{sensor.model || `ID: ${sensorId}`}</p>
+                    <p className="text-xs text-slate-400">{sensor.model || `ID: ${sensorId}`} · #{sensorId}</p>
+                    <p className="text-xs text-slate-500">{sensor.zoneName}</p>
                   </div>
                 </div>
-                <Badge variant={sensor.status === 'Active' ? 'success' : 'danger'}>{sensor.status}</Badge>
+                <Badge variant={getStatusVariant(sensor.status)}>{sensor.status}</Badge>
               </div>
               
               <div className="my-4">
                 <p className="text-sm text-slate-400 mb-1">Latest Reading</p>
-                <div className="text-2xl font-bold text-white">
-                  {latestVal !== null && latestVal !== undefined ? `${Number(latestVal).toFixed(1)} ${unit}` : '--'}
+                <div className={`text-2xl font-bold ${isBreaching ? 'text-red-400' : 'text-white'}`}>
+                  {latestVal !== null && latestVal !== undefined ? `${formatReading(latestVal)} ${unit}` : '--'}
                 </div>
                 {(thMin !== null && thMin !== undefined || thMax !== null && thMax !== undefined) && (
                   <p className="text-xs text-slate-500 mt-1">
-                    Safe Range: {thMin ?? '-∞'} to {thMax ?? '∞'} {unit}
+                    Safe Range: {thMin != null ? formatReading(thMin) : '-∞'} to {thMax != null ? formatReading(thMax) : '∞'} {unit}
                   </p>
                 )}
               </div>
@@ -111,6 +144,14 @@ export default function Sensors() {
                   className="w-full py-1.5 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded transition-colors"
                 >
                   {isSelected ? 'Hide History' : 'View History & Inject'}
+                </button>
+                <button
+                  onClick={() => toggleFaulty(sensorId, sensor.status)}
+                  className={`w-full py-1.5 text-xs rounded border transition-colors ${sensor.status === 'Faulty'
+                    ? 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
+                    : 'border-red-500/30 text-red-400 hover:bg-red-500/10'}`}
+                >
+                  {sensor.status === 'Faulty' ? 'Mark Active' : 'Mark Faulty'}
                 </button>
                 
                 {isSelected && (

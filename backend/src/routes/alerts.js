@@ -8,25 +8,31 @@ const { body, validationResult } = require('express-validator');
 router.get('/', asyncHandler(async (req, res) => {
   const { status = 'Open', zone_id, severity } = req.query;
   
-  let query = 'SELECT AlertID as "alertId", ZoneID as "zoneId", SensorID as "sensorId", BinID as "binId", AlertType as "alertType", Severity as "severity", Message as "message", Status as "status", RaisedAt as "raisedAt", ResolvedAt as "resolvedAt" FROM Alert WHERE 1=1';
+  let query = `
+    SELECT a.AlertID as "alertId", a.ZoneID as "zoneId", z.ZoneName as "zoneName", a.SensorID as "sensorId", a.BinID as "binId",
+           a.AlertType as "alertType", a.Severity as "severity", a.Message as "message", a.Status as "status",
+           a.RaisedAt as "raisedAt", a.ResolvedAt as "resolvedAt"
+    FROM Alert a
+    LEFT JOIN Zone z ON z.ZoneID = a.ZoneID
+    WHERE 1=1`;
   const params = [];
   
   if (status) {
     params.push(status);
-    query += ` AND Status = $${params.length}`;
+    query += ` AND a.Status = $${params.length}`;
   }
   
   if (zone_id) {
     params.push(zone_id);
-    query += ` AND ZoneID = $${params.length}`;
+    query += ` AND a.ZoneID = $${params.length}`;
   }
   
   if (severity) {
     params.push(severity);
-    query += ` AND Severity = $${params.length}`;
+    query += ` AND a.Severity = $${params.length}`;
   }
   
-  query += ' ORDER BY RaisedAt DESC';
+  query += ' ORDER BY a.RaisedAt DESC';
   
   const result = await pool.query(query, params);
   res.json(result.rows);
@@ -51,10 +57,12 @@ router.patch('/:id', [
   const { id } = req.params;
   const { status } = req.body;
   
-  const resolvedAtClause = status === 'Resolved' ? ', ResolvedAt = CURRENT_TIMESTAMP' : '';
-  
+  // ResolvedAt is set only while an alert is Resolved, so it never contradicts Status
   const result = await pool.query(
-    `UPDATE Alert SET Status = $1 ${resolvedAtClause} WHERE AlertID = $2 RETURNING AlertID as "alertId", ZoneID as "zoneId", SensorID as "sensorId", BinID as "binId", AlertType as "alertType", Severity as "severity", Message as "message", Status as "status", RaisedAt as "raisedAt", ResolvedAt as "resolvedAt"`,
+    `UPDATE Alert
+        SET Status = $1::VARCHAR,
+            ResolvedAt = CASE WHEN $1::VARCHAR = 'Resolved' THEN COALESCE(ResolvedAt, CURRENT_TIMESTAMP) ELSE NULL END
+      WHERE AlertID = $2 RETURNING AlertID as "alertId", ZoneID as "zoneId", SensorID as "sensorId", BinID as "binId", AlertType as "alertType", Severity as "severity", Message as "message", Status as "status", RaisedAt as "raisedAt", ResolvedAt as "resolvedAt"`,
     [status, id]
   );
   

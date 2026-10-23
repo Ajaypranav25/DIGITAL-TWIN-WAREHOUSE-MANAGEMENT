@@ -71,7 +71,7 @@ router.post('/', [
         throw new Error(`Product ${item.productId} not found`);
       }
       const price = parseFloat(pRes.rows[0].unitprice);
-      totalAmount += price * item.quantity;
+      totalAmount += Math.round(price * item.quantity * 100) / 100;
       enrichedItems.push({ ...item, price });
     }
     

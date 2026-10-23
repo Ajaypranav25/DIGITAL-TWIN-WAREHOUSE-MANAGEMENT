@@ -143,8 +143,6 @@ CREATE TABLE Sensor (
 );
 
 
- readings below this trigger an alert.';
- readings above this trigger an alert.';
 
 -- =============================================================================
 -- 8. SENSOR READING
@@ -158,9 +156,8 @@ CREATE TABLE SensorReading (
     RecordedAt      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
 
- never updated.';
 
--- Create a partial index to speed up "latest reading per sensor" queries
+-- Composite index to speed up "latest reading per sensor" queries
 CREATE INDEX idx_sr_sensor_time ON SensorReading(SensorID, RecordedAt DESC);
 
 -- =============================================================================

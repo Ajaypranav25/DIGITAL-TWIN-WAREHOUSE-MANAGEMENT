@@ -12,9 +12,9 @@ export default function UtilisationBar({ data = [] }) {
   return (
     <div className="h-72 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 20, right: 30, left: -20, bottom: 5 }}>
+        <BarChart data={data} margin={{ top: 20, right: 30, left: -20, bottom: 20 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
-          <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
+          <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} interval={0} angle={-20} textAnchor="end" height={50} />
           <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `${val}%`} />
           <Tooltip 
             cursor={{ fill: '#1e293b' }}

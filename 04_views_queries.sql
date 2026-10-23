@@ -80,7 +80,8 @@ SELECT
     zs.LastReadingAt                                AS ZoneLastSensorAt,
 
     -- Metadata
-    ii.LastUpdated                                  AS StockLastUpdated
+    ii.LastUpdated                                  AS StockLastUpdated,
+    ii.InventoryItemID                              AS InventoryItemID
 
 FROM Warehouse w
 JOIN Zone        z  ON z.WarehouseID = w.WarehouseID
@@ -172,14 +173,20 @@ SELECT
         ELSE                                                                                    'UNUSED'
     END                                                     AS ZoneHealthStatus,
 
-    -- Distinct products in the zone
-    COUNT(DISTINCT ii.ProductID)                            AS UniqueProducts
+    -- Distinct products in the zone. Counted in a correlated subquery: joining
+    -- InventoryItem directly would repeat a bin once per product it holds and
+    -- inflate every SUM/COUNT above.
+    (SELECT COUNT(DISTINCT ii.ProductID)
+       FROM InventoryItem ii
+       JOIN Bin  b2 ON b2.BinID  = ii.BinID
+       JOIN Rack r2 ON r2.RackID = b2.RackID
+      WHERE r2.ZoneID = z.ZoneID
+        AND ii.Quantity > 0)                                AS UniqueProducts
 
 FROM Warehouse   w
 JOIN Zone        z  ON z.WarehouseID = w.WarehouseID
 JOIN Rack        r  ON r.ZoneID      = z.ZoneID
 JOIN Bin         b  ON b.RackID      = r.RackID
-LEFT JOIN InventoryItem ii ON ii.BinID = b.BinID AND ii.Quantity > 0
 GROUP BY w.WarehouseID, w.Name, z.ZoneID, z.ZoneName, z.ZoneType
 ORDER BY w.WarehouseID, UtilisationPct DESC;
 

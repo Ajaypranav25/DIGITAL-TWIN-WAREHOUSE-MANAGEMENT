@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import { usePolling } from '../hooks/usePolling';
 import { getAlerts, updateAlert } from '../api/alerts';
@@ -13,7 +13,12 @@ export default function Alerts() {
   const [severityFilter, setSeverityFilter] = useState('');
   
   const { data: alerts, loading, refetch } = useApi(() => getAlerts(statusFilter === 'All' ? '' : statusFilter, severityFilter));
-  
+
+  // useApi only runs on mount, so reload as soon as a filter changes
+  useEffect(() => {
+    refetch().catch(() => {});
+  }, [statusFilter, severityFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
   usePolling(refetch, 10000);
 
   const handleAction = async (id, status) => {
@@ -72,7 +77,7 @@ export default function Alerts() {
     { 
       header: 'Message', 
       field: 'message', 
-      render: (val) => <span className="truncate max-w-sm block" title={val}>{val}</span> 
+      render: (val) => <span className="truncate max-w-[14rem] block" title={val}>{val}</span> 
     },
     { 
       header: 'Raised', 

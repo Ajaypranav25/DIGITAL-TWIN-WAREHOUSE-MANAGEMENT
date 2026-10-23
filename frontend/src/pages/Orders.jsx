@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/UI/LoadingSpinner';
 import StatCard from '../components/UI/StatCard';
 import Modal from '../components/UI/Modal';
 import { safeFormat } from '../utils/date';
+import { formatINR } from '../utils/currency';
 import toast from 'react-hot-toast';
 import { ShoppingCart, CheckCircle, Clock, XCircle, Plus, Trash2 } from 'lucide-react';
 
@@ -56,16 +57,14 @@ export default function Orders() {
   };
 
   const addItem = () => setFormData({ ...formData, items: [...formData.items, { productId: '', quantity: 1 }] });
-  const removeItem = (index) => {
-    const newItems = [...formData.items];
-    newItems.splice(index, 1);
-    setFormData({ ...formData, items: newItems });
-  };
-  const updateItem = (index, field, value) => {
-    const newItems = [...formData.items];
-    newItems[index][field] = value;
-    setFormData({ ...formData, items: newItems });
-  };
+  const removeItem = (index) => setFormData({
+    ...formData,
+    items: formData.items.filter((_, i) => i !== index),
+  });
+  const updateItem = (index, field, value) => setFormData({
+    ...formData,
+    items: formData.items.map((item, i) => (i === index ? { ...item, [field]: value } : item)),
+  });
 
   const getStatusVariant = (st) => {
     switch(st) {
@@ -107,7 +106,7 @@ export default function Orders() {
       header: 'Amount', 
       field: 'totalAmount', 
       altField: 'total_amount',
-      render: (val, row) => `$${Number(val || row.total_amount || 0).toFixed(2)}` 
+      render: (val, row) => formatINR(val ?? row.total_amount ?? 0)
     },
     { 
       header: 'Shipment',
@@ -212,7 +211,7 @@ export default function Orders() {
                     const pprice = p.unitprice || p.unitPrice || p.UnitPrice;
                     return (
                       <option key={pid} value={pid}>
-                        {pname} ({psku}) — ${Number(pprice).toFixed(2)}
+                        {pname} ({psku}) — {formatINR(pprice)}
                       </option>
                     );
                   })}

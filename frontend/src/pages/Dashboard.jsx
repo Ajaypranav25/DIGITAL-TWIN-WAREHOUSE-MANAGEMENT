@@ -71,7 +71,7 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard title="Total Stock Units" value={summary?.totalStock ?? 0} icon={Package} colorClass="text-indigo-400" />
-        <StatCard title="Active Alerts" value={summary?.openAlerts ?? 0} icon={Bell} colorClass="text-red-400" />
+        <StatCard title="Open Alerts" value={summary?.openAlerts ?? 0} icon={Bell} colorClass="text-red-400" />
         <StatCard title="Active Sensors" value={summary?.activeSensors ?? 0} icon={Activity} colorClass="text-emerald-400" />
         <StatCard title="Pending Orders" value={summary?.pendingOrders ?? 0} icon={ShoppingCart} colorClass="text-amber-400" />
       </div>
@@ -81,8 +81,11 @@ export default function Dashboard() {
           <div className="w-full bg-slate-700 rounded-full h-2 mt-2">
             <div className="bg-blue-500 h-2 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, summary?.utilizationPct || 0)}%` }}></div>
           </div>
+          <p className="text-xs text-slate-500 mt-2">
+            {summary?.totalStock ?? 0} of {summary?.totalCapacity ?? 0} units stored · {summary?.occupiedBins ?? 0} of {summary?.bins ?? 0} bins occupied
+          </p>
         </StatCard>
-        <StatCard title="Today's Fulfilled Orders" value={summary?.todayFulfilled ?? 0} icon={CheckCircle2} colorClass="text-emerald-400" />
+        <StatCard title="Orders Dispatched Today" value={summary?.todayFulfilled ?? 0} icon={CheckCircle2} colorClass="text-emerald-400" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
