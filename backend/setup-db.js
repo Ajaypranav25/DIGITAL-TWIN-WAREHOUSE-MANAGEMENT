@@ -6,8 +6,10 @@
  * Run: node setup-db.js
  */
 
+require('dotenv').config();
 const { Client } = require('pg');
 const { runAllScripts } = require('./sql-runner');
+const { connectionConfig } = require('./src/config/connection');
 
 const log = {
   info:  (m) => console.log('\x1b[36m→\x1b[0m', m),
@@ -17,15 +19,12 @@ const log = {
 };
 
 async function main() {
-  const client = new Client({
-    host:     'localhost',
-    port:     5432,
-    user:     'postgres',
-    password: 'postgres',
-    database: 'digital_twin_wms',
-  });
+  // DATABASE_URL targets a hosted database; otherwise the local embedded one
+  const client = new Client(connectionConfig());
 
-  log.info('Connecting to embedded PostgreSQL …');
+  log.info(process.env.DATABASE_URL || process.env.POSTGRES_URL
+    ? 'Connecting to DATABASE_URL …'
+    : 'Connecting to local PostgreSQL …');
   await client.connect();
   await client.query("SET client_encoding = 'UTF8'");
   log.ok('Connected!');
