@@ -1,7 +1,7 @@
 /**
  * sql-runner.js
- * Shared helpers used by dev-server.js and setup-db.js to load the four
- * numbered SQL scripts from the repository root.
+ * Shared helpers used by dev-server.js and setup-db.js to load the numbered
+ * SQL scripts from the repository root.
  */
 
 const path = require('path');
@@ -14,6 +14,7 @@ const SCRIPTS = [
   { file: '02_seed_data.sql',           label: 'Seed Data' },
   { file: '03_triggers_procedures.sql', label: 'Triggers & Procedures' },
   { file: '04_views_queries.sql',       label: 'Views & Queries' },
+  { file: '05_access_lockdown.sql',     label: 'Access Lockdown' },
 ];
 
 // Errors that are expected when a script is re-run against an existing DB

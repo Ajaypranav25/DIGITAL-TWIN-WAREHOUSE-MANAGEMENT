@@ -10,7 +10,7 @@
 function connectionConfig() {
   const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
   if (url) {
-    return { connectionString: url };
+    return { connectionString: withLibpqSslSemantics(url) };
   }
   return {
     host:     process.env.DB_HOST || 'localhost',
@@ -19,6 +19,26 @@ function connectionConfig() {
     user:     process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
   };
+}
+
+/**
+ * node-postgres 8.x treats sslmode=require/prefer as verify-full, which rejects
+ * hosted poolers (e.g. Supabase) whose certificates chain to a provider CA that
+ * Node does not ship. Opt in to standard libpq meaning instead: the connection
+ * is encrypted but the CA is not checked. sslmode=verify-full is left untouched.
+ */
+function withLibpqSslSemantics(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return rawUrl;
+  }
+  const sslmode = url.searchParams.get('sslmode');
+  if (['require', 'prefer'].includes(sslmode) && !url.searchParams.has('uselibpqcompat')) {
+    url.searchParams.set('uselibpqcompat', 'true');
+  }
+  return url.toString();
 }
 
 module.exports = { connectionConfig };
